@@ -49,6 +49,16 @@ class DribbleGame:
         self.countdown_duration = 5  # seconds
         self.game_started = False
 
+
+        self.boost_mode = False
+        self.boost_start_time = 0
+        self.boost_duration = 7  # 5–10 sec
+        self.score_multiplier = 1
+        self.combo = 0
+        self.last_hit_time = 0
+        self.last_boost_time = 0
+        self.boost_cooldown = 12
+
         self.generate_new_target()
 
     def generate_new_target(self):
@@ -67,10 +77,21 @@ class DribbleGame:
 
         return dist < (self.target_radius + ball_radius * 0.6)
     
-    def get_speed(self):
-        now = time.time()
-        self.score_history = [t for t in self.score_history if now - t < 3]
-        return len(self.score_history) / 3.0
+    # def get_speed(self):
+    #     now = time.time()
+    #     self.score_history = [t for t in self.score_history if now - t < 3]
+    #     return len(self.score_history) / 3.0
+    
+    def update_boost_mode(self):
+        
+        if self.boost_mode:
+            if time.time() - self.boost_start_time > self.boost_duration:
+                self.boost_mode = False
+        
+        self.score_multiplier = 3 if self.boost_mode else 1
+
+        if time.time() - self.last_hit_time > 2.5:
+            self.combo = 0
 
     def run(self):
         try:
@@ -83,6 +104,17 @@ class DribbleGame:
                 frame = cv2.flip(frame,1)
 
                 frame = cv2.resize(frame, (640, 480))
+
+                if self.game_started:
+                    now = time.time()
+                    if (not self.boost_mode and now - self.last_boost_time > self.boost_cooldown and random.random() < 0.002):
+
+                        self.boost_mode = True
+                        self.boost_start_time = time.time()
+                        self.score_multiplier = 3
+                        self.last_boost_time = now
+
+                        logger.info("BOOST ACTIVATED!")
 
                 if not self.game_started:
                     self.drawer.draw_position_line(frame,self)
@@ -99,51 +131,71 @@ class DribbleGame:
                 if time.time() - self.zone_start_time > self.zone_duration:
                     self.generate_new_target()
 
-                results_list = self.model(frame, conf=0.25, verbose=False)
+                results_list = self.model.predict(frame, conf=0.25, verbose=False)
 
-                for results in results_list:
+                if len(results_list)==0:
+                    continue
 
-                    if results.boxes is None or len(results.boxes)==0:
-                        print("No detections")
-                        continue
+                results = results_list[0]
 
-                    for bbox in results.boxes.xyxy:
-                        x1, y1, x2, y2 = bbox[:4].tolist()
+                if results.boxes is None or len(results.boxes) == 0:
+                    print("No detections")
+                    continue
 
-                        x_center = (x1 + x2) / 2
-                        y_center = (y1 + y2) / 2
+                for bbox in results.boxes.xyxy:
+                    x1, y1, x2, y2 = bbox[:4].tolist()
 
-                        ball_radius = max((x2 - x1),(y2 - y1)) /2
+                    x_center = (x1 + x2) / 2
+                    y_center = (y1 + y2) / 2
 
-                        # Draw ball center
-                        cv2.circle(frame, (int(x_center), int(y_center)),
-                                5, (0, 0, 255), -1)
+                    ball_radius = max((x2 - x1),(y2 - y1)) /2
 
-                        dribble,bounce_point = self.dribble_counter.update_dribble_count(
-                            x_center, y_center
-                        )
-                        if dribble and bounce_point is not None:
-                            bx, by = bounce_point
+                    dribble,bounce_point = self.dribble_counter.update_dribble_count(
+                        x_center, y_center
+                    )
+                    if dribble and bounce_point is not None:
+                        bx, by = bounce_point
 
-                            if self.is_inside_target(bx, by,ball_radius):
-                                self.score += 1
-                                self.score_history.append(time.time())
-                                self.hit_effect_time = time.time()
-                                self.hit_x = int(bx)
-                                self.hit_y = int(by)
-                                logger.info(f"HIT! Score: {self.score}")
-                            
+                        if self.is_inside_target(bx, by,ball_radius):
+
+                            now = time.time()
+
+                            # combo logic
+                            if now - self.last_hit_time < 1.2:
+                                self.combo +=1
+                                if self.combo > 10:
+                                    self.combo = 10
                             else:
-                                self.miss_effects.append({
-                                    "x": int(bx),
-                                    "y": int(by),
-                                    "time": time.time()
-                                })
+                                self.combo = 1
+
+                            self.last_hit_time = now
+
+                            multiplier = self.score_multiplier * (1 + min(self.combo // 3,3))
+
+                            self.score += multiplier
+                            self.score_history.append(time.time())
+
+                            self.hit_effect_time = time.time()
+                            self.hit_x = int(bx)
+                            self.hit_y = int(by)
+                            logger.info(f"HIT! Score: {self.score} Combo: {self.combo}")
+                        
+                        else:
+                            self.miss_effects.append({
+                                "x": int(bx),
+                                "y": int(by),
+                                "time": time.time()
+                            })
+                            if len(self.miss_effects) > 30:
+                                self.miss_effects.pop(0)
+
+                self.update_boost_mode()
 
                 # Draw UI
                 self.drawer.draw_target(frame,self)
                 self.drawer.draw_hit_effect(frame,self)
                 self.drawer.draw_miss_effects(frame,self)
+                self.drawer.draw_boost_overlay(frame,self)
                 self.drawer.draw_ui(frame,self)
 
                 cv2.imshow("Dribble Game", frame)
