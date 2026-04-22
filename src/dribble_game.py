@@ -5,7 +5,7 @@ import random
 import logging
 from ultralytics import YOLO
 from src.dribble_counting import DribbleCounter
-from utils.Draw import Draw
+from utils.draw import Draw
 from typing import Optional,Tuple,List,Dict
 from dotenv import load_dotenv
 import os
