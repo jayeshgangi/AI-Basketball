@@ -7,6 +7,10 @@ from ultralytics import YOLO
 from src.dribble_counting import DribbleCounter
 from utils.Draw import Draw
 from typing import Optional,Tuple,List,Dict
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 
 logging.basicConfig(
@@ -29,39 +33,44 @@ class DribbleGame:
 
         # Game state
         self.score = 0
-        self.score_history = []
         self.hit_effect_time = 0
         self.miss_effects=[]
 
         # Target
         self.target_x = None
         self.target_y = None
-        self.target_radius = 35
         self.hit_x = None
         self.hit_y = None
-
         self.zone_start_time = time.time()
-        self.zone_duration = 4
-
         self.game_start_time = time.time()
-        self.countdown_duration = 5  # seconds
         self.game_started = False
-
-
         self.boost_mode = False
         self.boost_start_time = 0
-        self.boost_duration = 7  # 5–10 sec
         self.score_multiplier = 1
         self.combo = 0
         self.last_hit_time = 0
         self.last_boost_time = 0
-        self.boost_cooldown = 12
-
-        self.game_duration = 60  # seconds
+        self.boost_cooldown = int(os.getenv("BOOST_COOLDOWN", 12))
+        self.boost_duration = int(os.getenv("BOOST_DURATION", 7))
+        self.countdown_duration = int(os.getenv("COUNTDOWN_DURATION", 5))
+        self.zone_duration = int(os.getenv("ZONE_DURATION", 4))
+        self.target_y_offset = float(os.getenv("TARGET_Y_OFFSET", 0.90))
+        self.target_radius = int(os.getenv("TARGET_RADIUS", 35))
+        self.game_duration = int(os.getenv("GAME_DURATION",60))
+        self.boost_chance = float(os.getenv("BOOST_CHANCE", 0.002))
+        self.combo_timeout = float(os.getenv("COMBO_TIMEOUT", 1.2))
+        self.combo_decay_time = float(os.getenv("COMBO_DECAY_TIME", 1.5))
+        self.max_combo_limit = int(os.getenv("MAX_COMBO_LIMIT", 10))
+        self.combo_break_threshold = int(os.getenv("COMBO_BREAK_THRESHOLD", 3))
+        self.yolo_conf = float(os.getenv("YOLO_CONFIDENCE", 0.25))
+        self.score_step = int(os.getenv("SCORE_MULTIPLIER_STEP", 3))
+        self.max_combo_bonus = int(os.getenv("MAX_COMBO_BONUS", 3))
+        self.boost_multiplier = int(os.getenv("BOOST_MULTIPLIER", 3))
         self.match_start_time = None
         self.game_over = False
-        self.final_screen = False
         self.max_combo=0
+        self.last_decay_time = 0
+        self.combo_break_time = 0
 
         self.generate_new_target()
 
@@ -80,7 +89,7 @@ class DribbleGame:
         w, h = 640, 480
 
         self.target_x = random.randint(100, w - 100)
-        self.target_y = int(h * 0.90)
+        self.target_y = int(h * self.target_y_offset)
 
         self.zone_start_time = time.time()
 
@@ -123,10 +132,7 @@ class DribbleGame:
             if time.time() - self.boost_start_time > self.boost_duration:
                 self.boost_mode = False
         
-        self.score_multiplier = 3 if self.boost_mode else 1
-
-        if time.time() - self.last_hit_time > 2.5:
-            self.combo = 0
+        self.score_multiplier = self.boost_multiplier if self.boost_mode else 1 
 
     def print_final_stats(self) -> None:
 
@@ -214,11 +220,11 @@ class DribbleGame:
                 if self.game_started:
                     if (not self.boost_mode and
                         now - self.last_boost_time > self.boost_cooldown and
-                        random.random() < 0.002):
+                        random.random() < self.boost_chance):
 
                         self.boost_mode = True
                         self.boost_start_time = now
-                        self.score_multiplier = 3
+                        self.score_multiplier = self.boost_multiplier
                         self.last_boost_time = now
 
                         logger.info("BOOST ACTIVATED!")
@@ -246,7 +252,7 @@ class DribbleGame:
                     if now - self.zone_start_time > self.zone_duration:
                         self.generate_new_target()
 
-                    results_list = self.model.predict(frame, conf=0.25, verbose=False)
+                    results_list = self.model.predict(frame, conf=self.yolo_conf, verbose=False)
                     if not results_list:
                         continue
 
@@ -264,25 +270,27 @@ class DribbleGame:
 
                         ball_radius = max((x2 - x1), (y2 - y1)) / 2
 
-                        dribble, bounce_point = self.dribble_counter.update_dribble_count(
-                            x_center, y_center
-                        )
+                        dribble, bounce_point = self.dribble_counter.update_dribble_count(x_center, y_center)
 
                         if dribble and bounce_point is not None:
                             bx, by = bounce_point
 
                             if self.is_inside_target(bx, by, ball_radius):
 
-                                # combo logic
-                                if now - self.last_hit_time < 1.2:
-                                    self.combo = min(self.combo + 1, 10)
+                                if now - self.last_hit_time < self.combo_timeout:
+                                    self.combo = min(self.combo + 1, self.max_combo_limit)
                                 else:
+                                    # COMBO BREAK DETECTED
+                                    if self.combo >= self.combo_break_threshold:
+                                        self.combo_break_time = now
+
                                     self.combo = 1
                                 
-                                self.max_combo = max(self.max_combo,self.combo)
                                 self.last_hit_time = now
 
-                                multiplier = self.score_multiplier * (1 + min(self.combo // 3, 3))
+                                self.max_combo = max(self.max_combo,self.combo)
+
+                                multiplier = self.score_multiplier * (1 + min(self.combo // self.score_step, self.max_combo_bonus))
 
                                 self.score += multiplier
 
@@ -291,6 +299,7 @@ class DribbleGame:
                                 self.hit_y = int(by)
 
                                 logger.info(f"HIT! Score: {self.score} Combo: {self.combo}")
+                                print(f"Combo: {self.combo}, Time since last hit: {now - self.last_hit_time:.2f}")
 
                             else:
                                 self.miss_effects.append({
@@ -306,6 +315,14 @@ class DribbleGame:
                 # BOOST UPDATE
                 # ----------------------------
                 self.update_boost_mode()
+
+                # COMBO DECAY (SMOOTH)
+                # -------------------------
+                if self.last_hit_time != 0 and now - self.last_hit_time > self.combo_decay_time:
+                    if now - self.last_decay_time > 0.2:
+                        if self.combo > 0:
+                            self.combo -= 1
+                            self.last_decay_time = now
 
                 # ----------------------------
                 # DRAW UI

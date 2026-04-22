@@ -67,7 +67,6 @@ class Draw:
 
         cv2.ellipse(frame,(x, y),(int(axes[0] * 0.65), int(axes[1] * 0.65)),0, 0, 360,(0, 0, 180),2)
 
-    # ================= HIT EFFECT =================
     def draw_hit_effect(self, frame: np.ndarray, game: DribbleGame) -> None:
         """
         Draw visual feedback when a target is hit.
@@ -131,7 +130,19 @@ class Draw:
 
             cv2.rectangle(frame,(w - 50, h - bar_height),(w - 20, h),(0, 255, 0), -1)
 
-            cv2.putText(frame, f"COMBO x{game.combo}",(10, 90),cv2.FONT_HERSHEY_SIMPLEX, 1,(0, 255, 255), 3)
+            if game.combo > 1:
+                scale = 1 + 0.3 * np.sin(time.time() * 10)
+
+                cv2.putText(frame,f"COMBO x{game.combo}",(10, 130),cv2.FONT_HERSHEY_SIMPLEX,scale,(0, 255, 255),3)
+
+            if time.time() - game.combo_break_time < 1.5:
+                overlay = frame.copy()
+
+                cv2.putText(overlay,"COMBO BREAK!",(120, 240),cv2.FONT_HERSHEY_SIMPLEX,1.8,(0, 0, 255),5)
+
+                # fade out effect
+                alpha = 1 - (time.time() - game.combo_break_time) / 1.5
+                cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
             
     # ================= MISS EFFECT =================
     def draw_miss_effects(self, frame : np.ndarray, game : DribbleGame) -> None:
