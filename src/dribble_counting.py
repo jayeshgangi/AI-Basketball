@@ -3,6 +3,7 @@ from ultralytics import YOLO
 import numpy as np
 import time
 import logging, os
+from typing import Tuple,Optional
 
 
 os.makedirs("logs",exist_ok=True)
@@ -161,36 +162,23 @@ class DribbleCounter:
                 frame,
                 f"deltaY: {self.prev_delta_y:.2f}",(10, 35),cv2.FONT_HERSHEY_SIMPLEX,0.5,(0, 0, 0),2)
 
-    # def update_dribble_count(self, x_center, y_center):
-    #     logger.debug("Updating dribble count...")
+    def update_dribble_count(self, x_center : float, y_center : float) -> Tuple[bool,Optional[Tuple[float,float]]]:
+        """
+        Detect dribble events based on vertical ball motion.
 
-    #     if self.prev_y_center is not None:
-    #         delta_y = y_center - self.prev_y_center
+        A dribble is detected when motion changes from downward
+        to upward beyond a threshold.
 
-    #         logger.debug(
-    #             f"delta_y: {delta_y:.2f}, prev_delta_y: {self.prev_delta_y}"
-    #         )
+        Args:
+            x (float): Current X position of the ball.
+            y (float): Current Y position of the ball.
 
-    #         if self.prev_delta_y is not None:
-
-    #             # DOWN → UP transition detection
-    #             if self.prev_delta_y > 5 and delta_y < -5:
-    #                 self.dribble_count += 1
-    #                 logger.info(
-    #                     f"DRIBBLE DETECTED | Count: {self.dribble_count}"
-    #                 )
-
-    #             else:
-    #                 logger.debug("No valid direction change.")
-
-    #         self.prev_delta_y = delta_y
-
-    #     else:
-    #         logger.debug("First frame — initializing position.")
-
-    #     self.prev_y_center = y_center
-
-    def update_dribble_count(self, x_center, y_center):
+        Returns:
+            Tuple[bool, Optional[Tuple[float, float]]]:
+                - bool: True if a dribble is detected
+                - Optional[Tuple[float, float]]: Bounce point (x, y) if detected
+        """
+        
         dribble_detected = False
         bounce_point = None
 
