@@ -2,12 +2,11 @@ import numpy as np
 import time,random,cv2,logging,os
 from ultralytics import YOLO
 from src.dribble_counting import DribbleCounter
-from utils.draw import Draw
+from utils.Draw import Draw
 from typing import Optional,Tuple,List,Dict
 from dotenv import load_dotenv
 
 load_dotenv()
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,12 +30,25 @@ class DribbleGame:
         self.score = 0
         self.hit_effect_time = 0
         self.miss_effects=[]
+        self.level = 1
+        self.level2_threshold = 50
+        self.level3_threshold = 120
+
+        # Danger ball
+        self.enemy_x = 100
+        self.enemy_y = 100
+        self.enemy_radius = 20
+        self.enemy_hit_effect_time = 0
+        self.enemy_dx = 5
+        self.enemy_dy = 4
 
         # Target
         self.target_x = None
         self.target_y = None
         self.hit_x = None
         self.hit_y = None
+        self.last_enemy_hit_time = 0
+        self.enemy_hit_cooldown = 0.8   # seconds
         self.zone_start_time = time.time()
         self.game_start_time = time.time()
         self.game_started = False
@@ -67,8 +79,39 @@ class DribbleGame:
         self.max_combo=0
         self.last_decay_time = 0
         self.combo_break_time = 0
+        self.enemy_spawn_time = 0
 
         self.generate_new_target()
+
+    def update_level(self):
+        prev_level = self.level
+
+        if self.score >= self.level3_threshold:
+            self.level = 3
+        elif self.score >= self.level2_threshold:
+            self.level = 2
+        else:
+            self.level = 1
+
+        # 🔥 NEW: respawn enemy when entering level 2
+        if prev_level < 2 and self.level >= 2:
+
+            side = random.choice(["left", "right"])
+
+            if side == "left":
+                self.enemy_x = random.randint(40, 120)
+            else:
+                self.enemy_x = random.randint(520, 600)
+
+            self.enemy_y = random.randint(40, 120)
+
+            # 🔥 ensure it moves toward center
+            self.enemy_dx = random.choice([4, 5])
+            if side == "right":
+                self.enemy_dx *= -1
+
+            self.enemy_dy = random.choice([3, 4])
+            self.enemy_spawn_time = time.time()
 
     def generate_new_target(self) -> None:
         
@@ -109,6 +152,23 @@ class DribbleGame:
         dist = np.hypot(x - self.target_x, y - visual_y)
 
         return dist < (self.target_radius + ball_radius * 0.6)
+    
+    def update_enemy(self):
+        if self.level < 2:
+            return
+
+        speed_multiplier = 1.5 + (self.level -1) * 1.0
+
+        self.enemy_x += self.enemy_dx * speed_multiplier
+        self.enemy_y += self.enemy_dy * speed_multiplier
+
+        # Bounce off walls
+        # Bounce off walls (FIXED)
+        if self.enemy_x < self.enemy_radius or self.enemy_x > 640 - self.enemy_radius:
+            self.enemy_dx *= -1
+
+        if self.enemy_y < self.enemy_radius or self.enemy_y > 480 - self.enemy_radius:
+            self.enemy_dy *= -1
     
     def update_boost_mode(self) -> None:
 
@@ -244,6 +304,8 @@ class DribbleGame:
                 # ----------------------------
                 if self.game_started and not self.game_over:
 
+                    self.update_level()
+
                     # move target
                     if now - self.zone_start_time > self.zone_duration:
                         self.generate_new_target()
@@ -267,6 +329,41 @@ class DribbleGame:
                         ball_radius = max((x2 - x1), (y2 - y1)) / 2
 
                         dribble, bounce_point = self.dribble_counter.update_dribble_count(x_center, y_center)
+
+                        check_x, check_y = x_center, y_center
+                        if bounce_point is not None:
+                            check_x = 0.6 * bounce_point[0] + 0.4 * x_center
+                            check_y = 0.6 * bounce_point[1] + 0.4 * y_center
+
+                        ignore_collision = (time.time() - self.enemy_spawn_time < 0.5)
+
+                        if self.level >= 2 and not ignore_collision:
+
+                            dist_enemy = np.hypot(check_x - self.enemy_x,check_y - self.enemy_y)
+
+                            collision_threshold = self.enemy_radius + ball_radius + 20
+
+                            if dist_enemy < collision_threshold:
+                                if now - self.last_enemy_hit_time > self.enemy_hit_cooldown:
+
+                                    self.score = max(0, self.score - 5)
+                                    self.score = min(self.score, self.level2_threshold - 1) 
+
+                                    self.level = 1
+                                    self.combo = 0
+                                    self.last_hit_time = 0
+
+                                    self.enemy_hit_effect_time = now
+
+                                    # push enemy away so no repeated instant hits
+                                    self.enemy_x = -100
+                                    self.enemy_y = -100
+
+                                    self.last_enemy_hit_time = now
+
+                                    logger.info("HIT BY ENEMY! RESET TO LEVEL 1")
+
+                                    continue
 
                         if dribble and bounce_point is not None:
                             bx, by = bounce_point
@@ -321,10 +418,14 @@ class DribbleGame:
                             self.last_decay_time = now
 
                 # ----------------------------
+                # Move enemy (only works after level update)
+                self.update_enemy()
                 # DRAW UI
                 # ----------------------------
                 self.drawer.draw_target(frame, self)
+                self.drawer.draw_enemy(frame,self)
                 self.drawer.draw_hit_effect(frame, self)
+                self.drawer.draw_enemy_hit_flash(frame, self)
                 self.drawer.draw_miss_effects(frame, self)
                 self.drawer.draw_boost_overlay(frame, self)
                 self.drawer.draw_ui(frame, self)
