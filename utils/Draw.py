@@ -130,6 +130,8 @@ class Draw:
 
             cv2.rectangle(frame,(w - 50, h - bar_height),(w - 20, h),(0, 255, 0), -1)
 
+            cv2.putText(frame, f"Level: {game.level}",(10, 80),cv2.FONT_HERSHEY_SIMPLEX,1,(255, 255, 255),2)
+
             if game.combo > 1:
                 scale = 1 + 0.3 * np.sin(time.time() * 10)
 
@@ -143,8 +145,54 @@ class Draw:
                 # fade out effect
                 alpha = 1 - (time.time() - game.combo_break_time) / 1.5
                 cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
-            
-    # ================= MISS EFFECT =================
+
+            if time.time() - game.enemy_hit_effect_time < 1.0:
+                cv2.putText(frame,"HIT! LEVEL RESET",(120, 200),cv2.FONT_HERSHEY_SIMPLEX,1.5,(0, 0, 255),4)
+
+    def draw_enemy(self, frame, game):
+        if game.level < 2:
+            return
+
+        # Main enemy ball
+        cv2.circle(frame,
+                (int(game.enemy_x), int(game.enemy_y)),
+                game.enemy_radius,
+                (0, 0, 255), -1)
+
+        # Glow effect
+        overlay = frame.copy()
+        cv2.circle(overlay,
+                (int(game.enemy_x), int(game.enemy_y)),
+                game.enemy_radius + 10,
+                (0, 0, 255), -1)
+
+        cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
+
+    
+    def draw_enemy_hit_flash(self, frame, game):
+        dt = time.time() - game.enemy_hit_effect_time
+
+        if dt < 0.4:
+            overlay = frame.copy()
+
+            # 🔥 Shockwave circle from enemy
+            radius = int(30 + 200 * dt)
+            cv2.circle(overlay,
+                    (int(game.enemy_x), int(game.enemy_y)),
+                    radius,
+                    (0, 0, 255), 6)
+
+            # 🔥 Screen flash (stronger)
+            alpha = 0.35 * (1 - dt / 0.4)
+            cv2.rectangle(overlay, (0, 0), (640, 480), (0, 0, 255), -1)
+
+            # 🔥 Shake effect
+            shake_x = int(np.random.randint(-8, 8))
+            shake_y = int(np.random.randint(-8, 8))
+
+            frame[:] = np.roll(frame, shift=(shake_y, shake_x), axis=(0, 1))
+
+            cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
     def draw_miss_effects(self, frame : np.ndarray, game : DribbleGame) -> None:
         """
         Draw visual indicators for missed shots.
