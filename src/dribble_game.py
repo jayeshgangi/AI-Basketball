@@ -1,14 +1,10 @@
-import cv2
 import numpy as np
-import time
-import random
-import logging
+import time,random,cv2,logging,os
 from ultralytics import YOLO
 from src.dribble_counting import DribbleCounter
 from utils.draw import Draw
 from typing import Optional,Tuple,List,Dict
 from dotenv import load_dotenv
-import os
 
 load_dotenv()
 
